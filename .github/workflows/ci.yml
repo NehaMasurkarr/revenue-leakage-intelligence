@@ -1,0 +1,36 @@
+name: checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.13']
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: revenue
+          POSTGRES_PASSWORD: ci_only_password
+          POSTGRES_DB: revenue_leakage_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd 'pg_isready -U revenue -d revenue_leakage_test'
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql+psycopg://revenue:ci_only_password@localhost:5432/revenue_leakage_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - run: python -m pip install -r requirements.lock
+      - run: python -m pip install --no-deps -e .
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: pytest -q
+      - run: revenue-leakage generate
+      - run: revenue-leakage validate

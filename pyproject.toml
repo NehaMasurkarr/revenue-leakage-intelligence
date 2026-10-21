@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "revenue-leakage-intelligence"
+version = "0.1.0"
+description = "Deterministic synthetic financial data for revenue leakage detection and recovery"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "SQLAlchemy>=2.0,<2.1", "psycopg[binary]>=3.2,<4", "pandas>=2.2,<3",
+  "numpy>=2,<2.3", "scipy>=1.14,<1.16", "Faker>=30,<38",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<9", "ruff>=0.9,<1"]
+
+[project.scripts]
+revenue-leakage = "revenue_leakage.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
