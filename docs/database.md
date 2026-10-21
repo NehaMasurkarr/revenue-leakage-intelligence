@@ -10,6 +10,7 @@ Export `DATABASE_URL` as documented in the README, then run `revenue-leakage mig
 | --- | --- |
 | 001_operational_schema.sql | Seven baseline operational tables, required columns, primary/foreign keys, arithmetic/range checks, uniqueness, foreign-key indexes |
 | 002_financial_indexes.sql | Positive ID checks, analytical indexes, ingestion audit ledger |
+| 004_etl_layers.sql | Raw change capture, typed staging, ETL audits/checkpoints, and published customer summary |
 | 003_analytics.sql | `analytics` schema, five views and cutoff-aware invoice-balances function |
 
 The runner creates `public.schema_migrations`, obtains a transaction-scoped advisory lock shared with the loader, verifies SHA-256 migration checksums, and skips already applied files. Unknown versions or altered applied files fail. Migration files are immutable once deployed; make new numbered files for later changes. Never bypass checksum errors by editing the ledger. Migrations are forward-only; restore a database backup for rollback. New application versions should be deployed with their required migrations. DDL and inserts roll back together if a load fails; sequence values can have gaps because PostgreSQL sequences are not transactional.
@@ -43,3 +44,7 @@ Locks permit ordinary reads but briefly block writers. Use the configured lock a
 The CLI uses exported environment variables and does not automatically parse `.env`. Give a migration/ingestion role CREATE and table write permissions only in the operational database. Analysts need SELECT on operational tables and analytics views, USAGE on `analytics`, and EXECUTE on `analytics.invoice_balances(date)`. SQL functions use invoker permissions and a fixed search path. Configure read-only roles/grants to suit the deployment; no users or credentials are created by migrations. Keep evaluation labels in their separate restricted database/directory.
 
 Integration tests require a completely empty dedicated database and clean up only the known project tables and analytics schema they create. They test fresh/replayed migrations, Phase 1 adoption, incompatible schemas, constraints, concurrent identical loads, idempotence, append, sequence synchronization, rollback after a late conflict, independent financial totals, historical cutoffs, multiple payments/refunds, month gaps, aging boundaries, and every query's EXPLAIN plan.
+
+## Phase 3 extension
+
+Migration 004 adds schemas `raw`, `staging`, and `etl`, plus `analytics.customer_financials`, without changing migrations 001–003 or the immutable Phase 2 loader. PostgreSQL schemas separate source evidence, normalized state, and published analytics. The legacy `data_loads` fingerprint ledger remains separate from the new execution audit. See [ETL operations](etl.md) for tracked updates, change-sequence checkpoints, retry/recovery and quality metrics. Integration tests also clean up these new schemas after each disposable-database test.

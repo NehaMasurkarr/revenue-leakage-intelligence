@@ -42,3 +42,7 @@ All generation randomness comes from a local NumPy generator and a locally seede
 ## Phase 2 database objects
 
 Migration 001 installs or verifies/adopts the Phase 1 baseline. Migration 002 adds positive primary-key checks, six analytical indexes, and the `data_loads` audit ledger. Migration 003 installs five operational views and the cutoff-aware invoice-balances function in the `analytics` schema. `schema_migrations` tracks checksums and execution timestamps. SQLAlchemy metadata remains the portable Phase 1 schema used for generation, CSV column order, and SQLite tests; use the migration runner rather than `metadata.create_all()` to deploy the complete PostgreSQL system. See [database operations](database.md) and [SQL definitions](sql_analytics.md).
+
+## Phase 3 layers
+
+Migration 004 adds `raw.deliveries`, `raw.changes`, `raw.current_records`, seven typed staging tables mirroring the baseline operational shape, and `etl.pipeline_runs`, `run_attempts`, `quality_results`, `source_state`. `analytics.customer_financials` publishes customer balances with run/cutoff lineage. Existing public financial tables and analytical views retain their schemas. See [ETL architecture and lineage](etl.md).

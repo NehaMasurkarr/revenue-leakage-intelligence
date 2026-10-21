@@ -40,3 +40,8 @@ jobs:
       - run: revenue-leakage load
       - run: revenue-leakage sql-check --as-of 2025-12-31
       - run: revenue-leakage explain --query monthly --as-of 2025-12-31
+      - run: revenue-leakage etl-run --mode full --snapshot-version 1 --as-of 2025-12-31
+      - run: revenue-leakage etl-run --snapshot-version 1 --as-of 2025-12-31
+      - run: revenue-leakage etl-run --replay --as-of 2025-12-31
+      - run: revenue-leakage etl-freshness --as-of 2025-12-31
+      - run: revenue-leakage sql-check --as-of 2025-12-31

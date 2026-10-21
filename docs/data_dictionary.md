@@ -141,3 +141,51 @@ Query outputs extend these relations:
 | check_name / violations | TEXT / BIGINT, quality query | Structural invariant name and number of failing records |
 
 Report rows are computed from operational data only. No new financial source columns or label-derived detection fields are introduced. Gross pricing and discount differences overlap economically and are not additive recovery estimates.
+
+## Phase 3 raw, staging and run lineage
+
+Migration 004 defines these tables. All source payloads come from the seven operational tables; ground-truth data is excluded. The complete lifecycle and metric definitions are in [ETL operations](etl.md).
+
+| Object / fields | Type | Meaning |
+| --- | --- | --- |
+| etl.pipeline_runs.run_id | UUID primary key | Unique execution ID, including failed and no-change runs |
+| source_name / mode / as_of | VARCHAR(80) / TEXT / DATE | Bound source, incremental/full mode, inclusive reporting cutoff |
+| started_at / ended_at | TIMESTAMPTZ / nullable TIMESTAMPTZ | Database execution times; ended_at is null exactly while running |
+| status / attempts | TEXT / INTEGER | running, succeeded, failed, abandoned; number of attempts begun |
+| metrics | JSONB | Capture/staging/published row counts, committed/target watermarks, quality/freshness measurements, reconciliation summary and phase |
+| error_type / error_message | nullable TEXT | Safe failure summary; never SQL parameters, connection credentials or raw row dumps |
+| etl.run_attempts.run_id / attempt | UUID FK / INTEGER composite primary key | Parent execution and attempt number |
+| started_at / ended_at / status / metrics / error_type / error_message | Same audit types | Per-attempt evidence independent of rollback of financial data |
+| sqlstate | nullable TEXT | PostgreSQL failure code used for retry classification |
+| etl.source_state.singleton | BOOLEAN primary key, true-only CHECK | Enforces one authoritative source namespace per operational database |
+| source_name | VARCHAR(80), unique | Stable source identifier referenced by raw tables |
+| snapshot_version / snapshot_fingerprint | BIGINT / nullable VARCHAR(64) | Latest accepted producer version and canonical content SHA-256 |
+| watermark | BIGINT | Highest raw change sequence included in successful publication; not an event date |
+| last_received_at / last_success_at | nullable TIMESTAMPTZ | Latest accepted new-version delivery and successful publication clocks |
+| last_run_id | nullable UUID FK | Last publishing execution |
+| raw.deliveries.source_name / snapshot_version | VARCHAR(80) / BIGINT composite primary key | Exactly one accepted delivery per source/version |
+| fingerprint / run_id / received_at | VARCHAR(64) / UUID FK / TIMESTAMPTZ | Canonical source snapshot hash, originating capture execution and landing time |
+| row_counts / changed_rows | JSONB / BIGINT | Source table counts and number of records newly captured in this delivery |
+| raw.changes.change_id | BIGSERIAL primary key | Durable change sequence; gaps are allowed |
+| source_name / snapshot_version | Composite FK to raw.deliveries | Accepted delivery that introduced this row version |
+| table_name / entity_id | TEXT / INTEGER | Allowlisted operational table and positive original primary key |
+| payload / payload_hash | JSONB / VARCHAR(64) | Original text/null values with canonical SHA-256; original business errors remain inspectable |
+| received_at | TIMESTAMPTZ | Change landing time, separate from invoice/payment/refund event dates |
+| raw.current_records.source_name / table_name / entity_id | Composite primary key | Current source entity namespace |
+| change_id / payload_hash | BIGINT FK / VARCHAR(64) | Pointer/hash of most recently landed row version |
+| etl.quality_results.run_id / attempt / check_name | UUID / INTEGER / TEXT composite primary key | Named measurement for a particular attempt; references attempt and run |
+| violations / details | BIGINT / JSONB | Zero on a passing invariant, positive on a failure; optional dates/ages/thresholds/error metadata |
+
+Each `staging.TABLE` has the same columns and baseline PostgreSQL types as its public operational counterpart documented above, including required values, PK/FK/unique/range/arithmetic constraints and FK indexes. IDs preserve source identity, and child foreign keys reference the corresponding staging parent. Normalized cents are BIGINT and dates DATE. Normalization/quality completes before publication. `staging.invoices.status` is derived from staged ledger receipts, not trusted as the current state in source text.
+
+| analytics.customer_financials column | Type | Meaning |
+| --- | --- | --- |
+| customer_id | INTEGER primary key, FK public.customers | One summary per eligible customer |
+| as_of | DATE | Explicit cutoff of this published summary |
+| invoice_count | BIGINT | Issued invoice count through cutoff |
+| billed_cents / collected_cents / settled_cents / refunded_cents | NUMERIC(30,0) | Exact aggregate operational cents from the cutoff-aware Phase 2 invoice balances function |
+| outstanding_cents / net_cash_cents | NUMERIC(30,0) | Billed minus ledger receipts / settled receipts minus refunds |
+| run_id | UUID FK etl.pipeline_runs | Execution that published this summary |
+| refreshed_at | TIMESTAMPTZ | Database refresh timestamp; updates on successful no-change runs too |
+
+Important execution metrics: `raw_changed` counts durable source record versions captured by that run (retained across retries); `source_rows` are complete input table counts; `staged_rows` count distinct changed entities selected in incremental mode or all latest entities in full mode; `status_corrections` counts ledger-derived invoice status updates; `stage_counts` are final normalized table sizes; `operational.TABLE.inserted/updated` count actual differing public records in a successful publication. `watermark_before`, `watermark_target` and `watermark_after` distinguish the starting point, selected bound and durable post-run checkpoint. Failed metrics carry `rolled_back=true`: row changes measured in that failed transaction were not published. A successful rerun may refresh analytics audit lineage while leaving every financial row unchanged.

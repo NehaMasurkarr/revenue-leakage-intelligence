@@ -24,12 +24,17 @@ def pg_engine():
     engine = engine_for(url)
     assert engine.dialect.name == "postgresql"
     assert not inspect(engine).get_table_names(), "Use an empty dedicated test database"
-    assert "analytics" not in inspect(engine).get_schema_names(), "Use an empty test database"
+    assert not {"analytics", "raw", "staging", "etl"} & set(inspect(engine).get_schema_names()), (
+        "Use an empty test database"
+    )
     try:
         yield engine
     finally:
         with engine.begin() as connection:
             connection.exec_driver_sql("DROP SCHEMA IF EXISTS analytics CASCADE")
+            connection.exec_driver_sql("DROP SCHEMA IF EXISTS staging CASCADE")
+            connection.exec_driver_sql("DROP SCHEMA IF EXISTS raw CASCADE")
+            connection.exec_driver_sql("DROP SCHEMA IF EXISTS etl CASCADE")
             metadata.drop_all(connection)
             connection.exec_driver_sql("DROP TABLE IF EXISTS public.data_loads")
             connection.exec_driver_sql("DROP TABLE IF EXISTS public.schema_migrations")

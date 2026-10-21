@@ -1,6 +1,6 @@
 # Revenue Leakage Detection & Recovery Intelligence
 
-Phases 1–2 provide reproducible synthetic subscription billing data, isolated evaluation labels, versioned PostgreSQL migrations, idempotent ingestion, and operational financial SQL analytics. No dashboards or visualizations are included; Tableau belongs to the final phase.
+Phases 1–3 provide reproducible synthetic subscription billing data, isolated evaluation labels, versioned PostgreSQL migrations, idempotent ingestion, operational financial SQL analytics, and audited incremental ETL with raw/staging/analytics layers. No dashboards or visualizations are included; Tableau belongs to the final phase.
 
 ## Quick start
 
@@ -113,3 +113,19 @@ Environment options are documented in `.env.example`: `DATABASE_URL`, `TEST_DATA
 The public repository is [NehaMasurkarr/revenue-leakage-intelligence](https://github.com/NehaMasurkarr/revenue-leakage-intelligence). CI tests PostgreSQL 16 on Python 3.11 and 3.13, then generates the full dataset, migrates, loads it twice, reconciles SQL reports, and checks query plans.
 
 No paid services are required.
+
+## Phase 3 ETL and quality automation
+
+The existing immutable `load` command is preserved. Use the new versioned snapshot workflow for updates and late-arriving transactions:
+
+```sh
+revenue-leakage etl-run --mode full --snapshot-version 1 --as-of 2025-12-31
+revenue-leakage etl-run --snapshot-version 1 --as-of 2025-12-31
+revenue-leakage etl-run --replay --as-of 2025-12-31
+revenue-leakage etl-freshness --as-of 2025-12-31
+revenue-leakage etl-runs --limit 20
+```
+
+Each complete source snapshot needs a producer-assigned increasing version. Identical version/content reruns are safe; corrections require a higher version. Content hashes capture changed records, and committed raw sequence watermarks drive processing, so old business dates do not hide late receipts. Extraction still scans complete files. Deletions, omitted prior IDs, stale versions and conflicting retransmissions fail. Only operational CSVs are read.
+
+Raw capture is durable independently; staging, public corrections, customer summaries, checkpoints and success audit commit together. The workflow reuses existing financial SQL and quality checks, records 19 quality results per successful run, retries transient database failures, and supports abandoned-run recovery. Failures return a run UUID for investigation. See [architecture, lineage, recovery, freshness and configuration](docs/etl.md), [ETL dictionary](docs/data_dictionary.md), and [Phase 3 validation](docs/phase3_validation.md).

@@ -22,8 +22,7 @@ def load_postgresql(engine, frames, batch_size=1000):
     with engine.begin() as connection:
         migrate_connection(connection)
         # Serialize with both pipeline users and arbitrary concurrent table writers.
-        names = ", ".join(f'public."{t.name}"' for t in metadata.sorted_tables)
-        connection.exec_driver_sql(f"LOCK TABLE {names} IN SHARE ROW EXCLUSIVE MODE")
+        lock_operational(connection)
         for table in metadata.sorted_tables:
             name = table.name  # Fixed schema names only; never external input.
             stage = f"stage_{name}"
@@ -53,13 +52,7 @@ def load_postgresql(engine, frames, batch_size=1000):
         from revenue_leakage.analytics import check_quality
 
         check_quality(connection)
-        for table in metadata.sorted_tables:
-            name = table.name
-            connection.exec_driver_sql(
-                f"SELECT setval(pg_get_serial_sequence('public.{name}', 'id'), "
-                f'COALESCE((SELECT MAX(id) FROM public."{name}"), 1), '
-                f'EXISTS (SELECT 1 FROM public."{name}"))'
-            )
+        sync_sequences(connection)
         connection.execute(
             text("""
             INSERT INTO data_loads (fingerprint, row_counts)
@@ -71,6 +64,25 @@ def load_postgresql(engine, frames, batch_size=1000):
                 "counts": json.dumps({name: len(frame) for name, frame in frames.items()}),
             },
         )
-        for table in metadata.sorted_tables:
-            connection.exec_driver_sql(f'ANALYZE public."{table.name}"')
+        analyze_operational(connection)
     return result
+
+
+def lock_operational(connection):
+    names = ", ".join(f'public."{t.name}"' for t in metadata.sorted_tables)
+    connection.exec_driver_sql(f"LOCK TABLE {names} IN SHARE ROW EXCLUSIVE MODE")
+
+
+def sync_sequences(connection):
+    for table in metadata.sorted_tables:
+        name = table.name
+        connection.exec_driver_sql(
+            f"SELECT setval(pg_get_serial_sequence('public.{name}', 'id'), "
+            f'COALESCE((SELECT MAX(id) FROM public."{name}"), 1), '
+            f'EXISTS (SELECT 1 FROM public."{name}"))'
+        )
+
+
+def analyze_operational(connection):
+    for table in metadata.sorted_tables:
+        connection.exec_driver_sql(f'ANALYZE public."{table.name}"')

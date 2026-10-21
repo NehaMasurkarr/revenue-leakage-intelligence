@@ -3,6 +3,7 @@
 import hashlib
 import json
 from importlib.metadata import version
+from io import BytesIO
 from pathlib import Path
 
 import pandas as pd
@@ -53,29 +54,39 @@ def write_dataset(root, frames, truth, config):
     return manifest
 
 
-def read_operational(root):
+def read_operational(root, *, raw=False):
     """Read and hash-check only operational CSVs; label files need not exist."""
     root = Path(root)
     manifest = json.loads((root / "manifest.json").read_text())
+    verified = {}
     for name in TABLES:
         relative = f"operational/{name}.csv"
         expected = manifest["sha256"].get(relative)
-        if not expected or hashlib.sha256((root / relative).read_bytes()).hexdigest() != expected:
+        payload = (root / relative).read_bytes()
+        if not expected or hashlib.sha256(payload).hexdigest() != expected:
             raise ValueError(f"Checksum mismatch: {relative}")
-    frames = _read_frames(root)
-    validate(frames)
+        verified[name] = payload
+    frames = _read_frames(root, raw=raw, verified=verified)
+    if not raw:
+        validate(frames)
     for name, frame in frames.items():
         if len(frame) != manifest["row_counts"].get(name):
             raise ValueError(f"Row count mismatch: {name}")
     return frames
 
 
-def _read_frames(root):
+def _read_frames(root, *, raw=False, verified=None):
     frames = {}
     for name, table in TABLES.items():
-        frame = pd.read_csv(root / "operational" / f"{name}.csv")
+        options = {"dtype": str, "keep_default_na": False} if raw else {}
+        source = (
+            BytesIO(verified[name])
+            if verified is not None
+            else (root / "operational" / f"{name}.csv")
+        )
+        frame = pd.read_csv(source, **options)
         for column in table.columns:
-            if isinstance(column.type, Date):
+            if not raw and isinstance(column.type, Date):
                 frame[column.name] = pd.to_datetime(frame[column.name]).dt.date
         frames[name] = frame
     return frames
@@ -89,11 +100,16 @@ def read_dataset(root):
     }
     if set(manifest["sha256"]) != expected:
         raise ValueError("Manifest file list differs from schema")
+    verified = {}
     for name, digest in manifest["sha256"].items():
-        if hashlib.sha256((root / name).read_bytes()).hexdigest() != digest:
+        payload = (root / name).read_bytes()
+        if hashlib.sha256(payload).hexdigest() != digest:
             raise ValueError(f"Checksum mismatch: {name}")
-    frames = _read_frames(root)
-    truth = pd.read_csv(root / "ground_truth" / "leakage_labels.csv")
+        verified[name] = payload
+    frames = _read_frames(
+        root, verified={name: verified[f"operational/{name}.csv"] for name in TABLES}
+    )
+    truth = pd.read_csv(BytesIO(verified["ground_truth/leakage_labels.csv"]))
     validate(frames, truth)
     return frames, truth
 

@@ -13,7 +13,7 @@ from revenue_leakage.storage import load_operational
 
 
 def test_fresh_migrations_and_replay(pg_engine):
-    assert len(migrate(pg_engine)) == 3
+    assert len(migrate(pg_engine)) == 4
     assert migrate(pg_engine) == []
     inspector = inspect(pg_engine)
     assert set(metadata.tables) <= set(inspector.get_table_names())
@@ -33,7 +33,7 @@ def test_phase_one_adoption_preserves_records(pg_engine, sample):
             rows = sample[0][table.name].to_dict("records")
             if rows:
                 conn.execute(table.insert(), rows)
-    assert len(migrate(pg_engine)) == 3
+    assert len(migrate(pg_engine)) == 4
     result = load_operational(pg_engine, sample[0])
     assert all(t["inserted"] == 0 for t in result["tables"].values())
 
