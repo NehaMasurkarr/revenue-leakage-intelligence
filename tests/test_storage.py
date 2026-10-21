@@ -1,12 +1,10 @@
-import os
-
 import pandas as pd
 import pytest
 from sqlalchemy import inspect, select
 from sqlalchemy.exc import IntegrityError
 
 from revenue_leakage.generator import Config, generate
-from revenue_leakage.schema import customers, invoices, metadata
+from revenue_leakage.schema import customers, invoices
 from revenue_leakage.storage import (
     engine_for,
     load_operational,
@@ -50,8 +48,12 @@ def exercise_database(engine, sample):
     assert "leakage_labels" not in inspect(engine).get_table_names()
     with engine.connect() as connection:
         assert len(connection.execute(select(invoices)).all()) == 400
-    with pytest.raises(ValueError, match="not empty"):
-        load_operational(engine, frames)
+    if engine.dialect.name == "postgresql":
+        result = load_operational(engine, frames)
+        assert all(t["inserted"] == 0 for t in result["tables"].values())
+    else:
+        with pytest.raises(ValueError, match="not empty"):
+            load_operational(engine, frames)
     with pytest.raises(IntegrityError), engine.begin() as connection:
         connection.execute(customers.delete())
     record = frames["invoices"].iloc[0].to_dict()
@@ -82,19 +84,8 @@ def test_truth_separate_database(sample):
         engine.dispose()
 
 
-@pytest.mark.skipif(not os.getenv("TEST_DATABASE_URL"), reason="TEST_DATABASE_URL not set")
-def test_postgresql(sample):
-    """Use only a dedicated disposable test database."""
-    engine = engine_for(os.environ["TEST_DATABASE_URL"])
-    assert engine.dialect.name == "postgresql"
-    assert not set(inspect(engine).get_table_names()) & set(metadata.tables), (
-        "Integration test requires an empty dedicated database"
-    )
-    try:
-        exercise_database(engine, sample)
-    finally:
-        metadata.drop_all(engine)
-        engine.dispose()
+def test_postgresql(pg_engine, sample):
+    exercise_database(pg_engine, sample)
 
 
 def test_database_isolation(sample):
@@ -112,3 +103,17 @@ def test_database_isolation(sample):
             load_operational(engine, sample[0])
     finally:
         engine.dispose()
+
+
+def test_operational_read_does_not_need_labels(tmp_path, sample):
+    from revenue_leakage.storage import read_operational
+
+    frames, truth = sample
+    write_dataset(tmp_path, frames, truth, Config(customers=80, invoices=400, leakage_rate=0.25))
+    (tmp_path / "ground_truth" / "leakage_labels.csv").unlink()
+    loaded = read_operational(tmp_path)
+    pd.testing.assert_frame_equal(loaded["invoices"], frames["invoices"])
+    path = tmp_path / "operational" / "invoices.csv"
+    path.write_text(path.read_text() + "corruption")
+    with pytest.raises(ValueError, match="Checksum mismatch"):
+        read_operational(tmp_path)

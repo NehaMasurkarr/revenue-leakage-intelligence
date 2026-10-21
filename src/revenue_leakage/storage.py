@@ -53,6 +53,34 @@ def write_dataset(root, frames, truth, config):
     return manifest
 
 
+def read_operational(root):
+    """Read and hash-check only operational CSVs; label files need not exist."""
+    root = Path(root)
+    manifest = json.loads((root / "manifest.json").read_text())
+    for name in TABLES:
+        relative = f"operational/{name}.csv"
+        expected = manifest["sha256"].get(relative)
+        if not expected or hashlib.sha256((root / relative).read_bytes()).hexdigest() != expected:
+            raise ValueError(f"Checksum mismatch: {relative}")
+    frames = _read_frames(root)
+    validate(frames)
+    for name, frame in frames.items():
+        if len(frame) != manifest["row_counts"].get(name):
+            raise ValueError(f"Row count mismatch: {name}")
+    return frames
+
+
+def _read_frames(root):
+    frames = {}
+    for name, table in TABLES.items():
+        frame = pd.read_csv(root / "operational" / f"{name}.csv")
+        for column in table.columns:
+            if isinstance(column.type, Date):
+                frame[column.name] = pd.to_datetime(frame[column.name]).dt.date
+        frames[name] = frame
+    return frames
+
+
 def read_dataset(root):
     root = Path(root)
     manifest = json.loads((root / "manifest.json").read_text())
@@ -64,19 +92,17 @@ def read_dataset(root):
     for name, digest in manifest["sha256"].items():
         if hashlib.sha256((root / name).read_bytes()).hexdigest() != digest:
             raise ValueError(f"Checksum mismatch: {name}")
-    frames = {}
-    for name, table in TABLES.items():
-        frame = pd.read_csv(root / "operational" / f"{name}.csv")
-        for column in table.columns:
-            if isinstance(column.type, Date):
-                frame[column.name] = pd.to_datetime(frame[column.name]).dt.date
-        frames[name] = frame
+    frames = _read_frames(root)
     truth = pd.read_csv(root / "ground_truth" / "leakage_labels.csv")
     validate(frames, truth)
     return frames, truth
 
 
-def load_operational(engine, frames):
+def load_operational(engine, frames, batch_size=1000):
+    if engine.dialect.name == "postgresql":
+        from revenue_leakage.pipeline import load_postgresql
+
+        return load_postgresql(engine, frames, batch_size)
     validate(frames)
     # No replace/truncate: refuse nonempty databases and preserve SQL constraints.
     with engine.begin() as connection:
